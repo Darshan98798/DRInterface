@@ -431,6 +431,74 @@ app.delete('/api/feedback/:id', async (req, res) => {
     res.json({ success: true });
 });
 
+// ──────────────────────────────────────────────────────────────────
+// API: Visitors Tracking
+// ──────────────────────────────────────────────────────────────────
+app.post('/api/visitors', async (req, res) => {
+    try {
+        const { name, country } = req.body;
+        console.log(`--> [VISITOR] Received submission from: ${name} (${country})`);
+
+        if (!name) {
+            return res.status(400).json({ error: 'Name is required.' });
+        }
+        
+        const visitorData = {
+            name,
+            country: country || 'Unknown'
+        };
+
+        const { error } = await supabaseClient.from('visitors').insert(visitorData);
+        
+        if (error) {
+            console.error('--> [VISITOR] Supabase Error:', error);
+            return res.status(500).json({ error: `Supabase Error: ${error.message} (Code: ${error.code})` });
+        }
+
+        // Send Telegram Notification using native https to avoid Node version fetch issues
+        const botToken = process.env.TELEGRAM_BOT_TOKEN;
+        const chatId = process.env.TELEGRAM_CHAT_ID;
+        
+        if (botToken && chatId && botToken !== 'YOUR_BOT_TOKEN_HERE') {
+            const message = encodeURIComponent(`🚨 *New Website Visitor!*\n👤 Name: ${name}\n🌍 Country: ${country || 'Unknown'}`);
+            const url = `https://api.telegram.org/bot${botToken}/sendMessage?chat_id=${chatId}&text=${message}&parse_mode=Markdown`;
+            
+            const https = require('https');
+            https.get(url, (response) => {
+                let data = '';
+                response.on('data', chunk => { data += chunk; });
+                response.on('end', () => {
+                    try {
+                        const parsed = JSON.parse(data);
+                        if(parsed.ok) console.log('--> [VISITOR] Telegram Notification Sent');
+                        else console.error('--> [VISITOR] Telegram API Error:', parsed.description);
+                    } catch (e) {
+                        console.error('--> [VISITOR] Telegram Parse Error:', e.message);
+                    }
+                });
+            }).on('error', (err) => {
+                console.error('--> [VISITOR] Telegram Request Failed:', err.message);
+            });
+        } else {
+            console.log('--> [VISITOR] Telegram skipped: Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID in environment variables. Make sure to add them in your Render dashboard!');
+        }
+
+        res.json({ success: true, message: 'Visitor logged successfully.' });
+    } catch (e) {
+        console.error('--> [VISITOR] System Error:', e);
+        res.status(500).json({ error: `Internal Server Error: ${e.message}` });
+    }
+});
+
+app.get('/api/visitors', async (req, res) => {
+    const { data, error } = await supabaseClient
+        .from('visitors')
+        .select('*')
+        .order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
+});
+
 // Removed logger from here (moved to top)
 
 // Add global error handler to catch unseen upload/multer errors
